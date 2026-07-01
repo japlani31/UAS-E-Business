@@ -17,6 +17,13 @@ from datetime import datetime
 import streamlit as st
 import streamlit.components.v1 as components
 
+# Jembatan JS -> Python untuk membaca hitungan pindah tab dari browser
+try:
+    from streamlit_javascript import st_javascript
+    _JS_ADA = True
+except Exception:
+    _JS_ADA = False
+
 # ---- Impor bank soal UAS (wajib) ----
 import uas_soal
 
@@ -118,19 +125,16 @@ def suntik_anti_contek():
             if (e.key === 'PrintScreen'){ e.preventDefault(); }
         }, {capture:true});
 
-        // Hitung berapa kali mahasiswa meninggalkan halaman (pindah tab / minimize)
-        if (!window.parent.__vtHook){
-            window.parent.__vtHook = true;
-            d.addEventListener('visibilitychange', function(){
-                if (d.hidden){
-                    try{
-                        const u = new URL(window.parent.location);
-                        let c = parseInt(u.searchParams.get('vt') || '0') + 1;
-                        u.searchParams.set('vt', c);
-                        window.parent.history.replaceState({}, '', u);
-                    }catch(err){}
-                }
-            });
+        // Hitung berapa kali mahasiswa meninggalkan halaman (pindah tab / pindah aplikasi).
+        // Disimpan pada window utama (window.parent.__vtCount) lalu dibaca Python via st_javascript.
+        const W = window.parent;
+        if (!W.__vtHook){
+            W.__vtHook = true;
+            if (typeof W.__vtCount === 'undefined') W.__vtCount = 0;
+            const naik = function(){ if (W.document.hidden){ W.__vtCount = (W.__vtCount||0) + 1; } };
+            W.document.addEventListener('visibilitychange', naik, true);
+            // Cadangan untuk sebagian browser HP saat pindah aplikasi
+            W.addEventListener('pagehide', naik, true);
         }
         </script>
         """,
@@ -139,9 +143,12 @@ def suntik_anti_contek():
 
 
 def baca_pindah_tab():
-    """Membaca jumlah pindah tab dari parameter URL (diisi oleh JS)."""
+    """Membaca jumlah pindah tab langsung dari browser (jembatan JS -> Python)."""
+    if not _JS_ADA:
+        return 0
     try:
-        return int(st.query_params.get("vt", 0))
+        v = st_javascript("(window.parent.__vtCount)||0", key="vt_read")
+        return int(v) if v is not None else 0
     except Exception:
         return 0
 
@@ -293,7 +300,7 @@ def _mesin_ujian(judul, jenis, durasi_menit, paket_fn):
             st.session_state[ns + "paket"] = paket_fn(npm.strip())
             st.session_state[ns + "start_ts"] = time.time()
             st.session_state[ns + "selesai"] = False
-            st.query_params["vt"] = "0"  # reset penghitung pindah tab
+            st.session_state[ns + "vt_reset"] = False  # akan direset di halaman ujian
             st.rerun()
         return
 
@@ -305,6 +312,12 @@ def _mesin_ujian(judul, jenis, durasi_menit, paket_fn):
     # ---------- Tahap 2: pengerjaan ----------
     suntik_anti_contek()
     suntik_watermark(st.session_state[ns + "nama"], st.session_state[ns + "npm"])
+    # Reset penghitung pindah tab sekali di awal ujian
+    if not st.session_state.get(ns + "vt_reset"):
+        components.html("<script>window.parent.__vtCount = 0;</script>", height=0)
+        st.session_state[ns + "vt_reset"] = True
+    # Baca hitungan pindah tab terkini dari browser dan simpan
+    st.session_state[ns + "pindah_live"] = baca_pindah_tab()
     paket = st.session_state[ns + "paket"]
     durasi_detik = durasi_menit * 60
     sisa = int(durasi_detik - (time.time() - st.session_state[ns + "start_ts"]))
@@ -323,6 +336,9 @@ def _mesin_ujian(judul, jenis, durasi_menit, paket_fn):
         unsafe_allow_html=True,
     )
     st.caption(f"Peserta: {st.session_state[ns+'nama']} · NPM {st.session_state[ns+'npm']}")
+    _pindah = st.session_state.get(ns + "pindah_live", 0)
+    if _pindah > 0:
+        st.warning(f"⚠️ Terdeteksi keluar dari halaman {_pindah} kali. Aktivitas ini tercatat dan dilaporkan ke dosen.")
 
     with st.form(ns + "form_ujian"):
         jawaban = {}
@@ -371,7 +387,7 @@ def _finalisasi(ns, jenis, otomatis):
     total = len(paket)
     nilai = round(benar / total * 100, 1) if total else 0
     durasi = int(time.time() - st.session_state[ns + "start_ts"])
-    pindah = baca_pindah_tab()
+    pindah = st.session_state.get(ns + "pindah_live", 0)
 
     st.session_state[ns + "hasil"] = {
         "benar": benar, "total": total, "nilai": nilai,

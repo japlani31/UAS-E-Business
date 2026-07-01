@@ -3,3 +3,4 @@ gspread>=6.1
 google-auth>=2.30
 qrcode>=7.4
 pillow>=10.0
+streamlit-javascript>=0.1.5

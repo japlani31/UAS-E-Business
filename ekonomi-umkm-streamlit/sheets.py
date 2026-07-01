@@ -74,12 +74,20 @@ def _buka_worksheet(spreadsheet_key, tab_name):
     return ws
 
 
+def _normalisasi_key(nilai):
+    """Menerima kunci polos ATAU URL lengkap Google Sheet, mengembalikan kunci saja."""
+    nilai = str(nilai).strip()
+    if "/d/" in nilai:
+        nilai = nilai.split("/d/", 1)[1].split("/", 1)[0]
+    return nilai
+
+
 def _key_uas():
-    return st.secrets.get("uas_spreadsheet_key", "")
+    return _normalisasi_key(st.secrets.get("uas_spreadsheet_key", ""))
 
 
 def _key_tugas():
-    return st.secrets.get("tugas_spreadsheet_key", "")
+    return _normalisasi_key(st.secrets.get("tugas_spreadsheet_key", ""))
 
 
 def npm_sudah_mengerjakan(npm, jenis="uas"):
